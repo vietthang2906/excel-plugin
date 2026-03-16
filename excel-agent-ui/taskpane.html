@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Excel AI Agent</title>
+
+    <!-- Office JavaScript API -->
+    <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+
+    <!-- Local styles -->
+    <link href="taskpane.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body class="ms-font-m ms-welcome ms-Fabric">
+    <header class="ms-welcome__header ms-bgColor-neutralLighter">
+        <h1 class="ms-font-su">Excel AI Assistant</h1>
+    </header>
+
+    <main id="app-body" class="ms-welcome__main" style="display: none;">
+        <div class="chat-container">
+            <div id="chat-messages" class="messages-area">
+                <div class="message system">Hello! I am your local Llama 3 assistant. Ask me anything about this spreadsheet.</div>
+            </div>
+            
+            <div class="input-area">
+                <textarea id="user-input" placeholder="Ask about your data..."></textarea>
+                <button id="send-button" class="ms-Button ms-Button--primary">
+                    <span class="ms-Button-label">Send</span>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Local logic -->
+    <script type="text/javascript" src="taskpane.js"></script>
+</body>
+</html>
