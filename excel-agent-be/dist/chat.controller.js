@@ -33,6 +33,19 @@ let ChatController = class ChatController {
             throw new common_1.HttpException('Failed to communicate with LLM Agent', common_1.HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
+    async handleRoute(body) {
+        if (!body.prompt || !body.schema) {
+            throw new common_1.HttpException('Prompt and schema are required', common_1.HttpStatus.BAD_REQUEST);
+        }
+        try {
+            const routeAction = await this.chatService.routeTask(body.prompt, body.schema);
+            return routeAction;
+        }
+        catch (error) {
+            console.error('Error in handleRoute:', error);
+            throw new common_1.HttpException('Failed to communicate with LLM Router', common_1.HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 };
 exports.ChatController = ChatController;
 __decorate([
@@ -42,6 +55,13 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], ChatController.prototype, "handleChat", null);
+__decorate([
+    (0, common_1.Post)('route'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], ChatController.prototype, "handleRoute", null);
 exports.ChatController = ChatController = __decorate([
     (0, common_1.Controller)('chat'),
     __metadata("design:paramtypes", [chat_service_1.ChatService])

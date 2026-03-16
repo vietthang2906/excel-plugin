@@ -34,10 +34,40 @@ async function handleSend() {
     setLoadingState(true);
 
     try {
-        // 3. Extract Context from Excel (CAG)
-        const excelContext = await extractExcelContext();
+        // Phase A: The Cheap Router
+        // 3. Extract Schema (Metadata only)
+        const schema = await extractExcelSchema();
         
-        // 4. Send to Backend
+        // 4. Send Prompt + Schema to Router
+        const routeResponse = await fetch(`${API_BASE_URL}/chat/route`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                prompt: message,
+                schema: schema
+            })
+        });
+
+        if (!routeResponse.ok) {
+            throw new Error(`Router error: ${routeResponse.status}`);
+        }
+
+        const routeData = await routeResponse.json();
+        
+        let finalContext = "";
+        
+        // Phase B: Conditionally Fetch Data
+        if (routeData.action === 'fetch' && routeData.range) {
+            // Router requested specific data
+            finalContext = await fetchExcelRange(routeData.range);
+        } else if (routeData.action === 'fetch_all') {
+            // Fallback: Router requested everything
+            finalContext = await fetchExcelRange(schema.fullRangeAddress);
+        }
+
+        // 5. Send to precision Answer Backend
         const response = await fetch(`${API_BASE_URL}/chat`, {
             method: 'POST',
             headers: {
@@ -45,7 +75,7 @@ async function handleSend() {
             },
             body: JSON.stringify({
                 prompt: message,
-                context: excelContext
+                context: finalContext
             })
         });
 
@@ -55,13 +85,8 @@ async function handleSend() {
 
         const data = await response.json();
         
-        // 5. Display agent response
+        // 6. Display agent response
         appendMessage(data.reply, 'agent');
-        
-        // (Optional Future) 6. Execute actions if returned by LLM
-        if (data.action) {
-            // e.g. executeOfficeJsAction(data.action);
-        }
         
     } catch (error) {
         console.error("Error communicating with backend:", error);
@@ -72,41 +97,84 @@ async function handleSend() {
 }
 
 /**
- * Extracts data from the currently active worksheet to build the CAG context.
- * For now, this extracts the used range as a CSV string.
+ * PHASE A: Extracts ONLY metadata schema from the current worksheet.
  */
-async function extractExcelContext() {
+async function extractExcelSchema() {
     return Excel.run(async (context) => {
         const sheet = context.workbook.worksheets.getActiveWorksheet();
-        // Get the range that actually contains data
         const usedRange = sheet.getUsedRange();
-        
-        // Load the values of the used range
-        usedRange.load("values");
+        usedRange.load(["address", "rowCount", "columnCount"]);
         await context.sync();
 
-        if (!usedRange.values || usedRange.values.length === 0) {
-            return "The current worksheet is empty.";
+        if (usedRange.rowCount === 0) {
+            return { isEmpty: true };
         }
 
-        // Convert 2D array of values to JSON format for the LLM
-        // Assume the first row contains headers
-        const headers = usedRange.values[0];
-        const rowData = usedRange.values.slice(1);
+        // Just get the header row (assume row 1 of the used range)
+        const headerRange = usedRange.getRow(0);
+        headerRange.load("values");
+        await context.sync();
 
-        const jsonData = rowData.map(row => {
-            const rowObject = {};
-            row.forEach((cellValue, index) => {
-                const header = headers[index] || `Column${index + 1}`;
-                rowObject[header] = cellValue === null || cellValue === undefined ? "" : cellValue;
-            });
-            return rowObject;
+        return {
+            isEmpty: false,
+            fullRangeAddress: usedRange.address.split("!")[1], // Strip SheetName
+            rowCount: usedRange.rowCount,
+            columnCount: usedRange.columnCount,
+            headers: headerRange.values[0]
+        };
+    }).catch(error => {
+        console.error("Error extracting Schema:", error);
+        return { error: true };
+    });
+}
+
+/**
+ * PHASE B: Fetches a specific range and formats it efficiently (Coordinate-Mapped CSV)
+ */
+async function fetchExcelRange(rangeAddress) {
+    if (!rangeAddress) return "";
+    return Excel.run(async (context) => {
+        const sheet = context.workbook.worksheets.getActiveWorksheet();
+        const range = sheet.getRange(rangeAddress);
+        range.load(["values", "rowIndex", "columnIndex"]); // Get indices to map coordinates
+        await context.sync();
+
+        if (!range.values || range.values.length === 0) {
+            return "Requested range is empty.";
+        }
+        
+        // Fetch header row to provide context in the CSV
+        // Default to the first row of used range as header
+        const usedRange = sheet.getUsedRange();
+        const headerRange = usedRange.getRow(0);
+        headerRange.load("values");
+        await context.sync();
+        const headers = headerRange.values[0];
+
+        // Format into token-efficient Coordinate-Mapped CSV
+        const startRow = range.rowIndex + 1; // 1-indexed for human readability
+        
+        let csvBuilder = [headers.join(",")]; // First line is always header
+        
+        range.values.forEach((row, index) => {
+            const rowNum = startRow + index;
+            // Skip appending the header row again if the requested range started at row 1
+            if (rowNum === 1) return;
+            
+            const rowCSV = row.map(cellValue => {
+                if (typeof cellValue === 'string' && cellValue.includes(',')) {
+                    return `"${cellValue}"`;
+                }
+                return cellValue === null || cellValue === undefined ? "" : cellValue;
+            }).join(",");
+            
+            csvBuilder.push(`Row ${rowNum}: ${rowCSV}`);
         });
 
-        return JSON.stringify(jsonData);
+        return csvBuilder.join("\n");
     }).catch(error => {
-        console.error("Error extracting Excel data:", error);
-        return "Failed to extract context from Excel.";
+        console.error("Error fetching Specific Range:", error);
+        return "Failed to extract specified data range from Excel.";
     });
 }
 

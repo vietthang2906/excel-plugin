@@ -6,6 +6,11 @@ export interface ChatRequestDto {
     context: string;
 }
 
+export interface ChatRouteRequestDto {
+    prompt: string;
+    schema: any; // Using any for schema extraction metadata
+}
+
 @Controller('chat')
 export class ChatController {
     constructor(private readonly chatService: ChatService) {}
@@ -23,6 +28,24 @@ export class ChatController {
             console.error('Error in ChatController:', error);
             throw new HttpException(
                 'Failed to communicate with LLM Agent',
+                HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
+    @Post('route')
+    async handleRoute(@Body() body: ChatRouteRequestDto) {
+        if (!body.prompt || !body.schema) {
+            throw new HttpException('Prompt and schema are required', HttpStatus.BAD_REQUEST);
+        }
+
+        try {
+            const routeAction = await this.chatService.routeTask(body.prompt, body.schema);
+            return routeAction;
+        } catch (error) {
+            console.error('Error in handleRoute:', error);
+            throw new HttpException(
+                'Failed to communicate with LLM Router',
                 HttpStatus.INTERNAL_SERVER_ERROR,
             );
         }
