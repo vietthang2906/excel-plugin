@@ -1,9 +1,15 @@
 import { Controller, Post, Body, HttpException, HttpStatus } from '@nestjs/common';
 import { ChatService } from './chat.service';
 
+export interface ChatMessageDto {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
 export interface ChatRequestDto {
     prompt: string;
     context: string;
+    history?: ChatMessageDto[];
 }
 
 @Controller('chat')
@@ -17,7 +23,11 @@ export class ChatController {
         }
 
         try {
-            const reply = await this.chatService.generateResponse(body.prompt, body.context);
+            const reply = await this.chatService.generateResponse(
+                body.prompt,
+                body.context,
+                body.history ?? [],
+            );
             return { reply };
         } catch (error) {
             console.error('Error in ChatController:', error);

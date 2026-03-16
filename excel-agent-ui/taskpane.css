@@ -29,6 +29,23 @@ header h1 {
     height: calc(100vh - 55px);
 }
 
+.chat-header {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 15px;
+    background-color: #ffffff;
+    border-bottom: 1px solid #e1dfdd;
+}
+
+.chat-header .ms-Button--secondary {
+    background-color: transparent;
+    color: #605e5c;
+}
+
+.chat-header .ms-Button--secondary:hover {
+    background-color: #edebe9;
+}
+
 /* Messages area */
 .messages-area {
     flex: 1;

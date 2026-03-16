@@ -7,6 +7,7 @@ Office.onReady((info) => {
         
         // Attach event listeners
         document.getElementById("send-button").onclick = handleSend;
+        document.getElementById("clear-chat-button").onclick = clearChat;
         
         // Enter key to send
         document.getElementById("user-input").addEventListener("keypress", function(event) {
@@ -18,7 +19,10 @@ Office.onReady((info) => {
     }
 });
 
-const API_BASE_URL = 'https://localhost:3000'; // Default NestJS port
+const API_BASE_URL = 'https://localhost:3000'; // NestJS backend port
+
+// Chat history for conversation context: { role: 'user'|'assistant', content: string }
+let chatHistory = [];
 
 async function handleSend() {
     const inputElement = document.getElementById("user-input");
@@ -26,8 +30,9 @@ async function handleSend() {
     
     if (!message) return;
 
-    // 1. Display user message
+    // 1. Display user message and add to history
     appendMessage(message, 'user');
+    chatHistory.push({ role: 'user', content: message });
     inputElement.value = '';
     
     // 2. Disable input while processing
@@ -37,7 +42,7 @@ async function handleSend() {
         // 3. Extract Context from Excel (CAG)
         const excelContext = await extractExcelContext();
         
-        // 4. Send to Backend
+        // 4. Send to Backend (include chat history for full context)
         const response = await fetch(`${API_BASE_URL}/chat`, {
             method: 'POST',
             headers: {
@@ -45,7 +50,8 @@ async function handleSend() {
             },
             body: JSON.stringify({
                 prompt: message,
-                context: excelContext
+                context: excelContext,
+                history: chatHistory.slice(0, -1) // Exclude current message (already in prompt)
             })
         });
 
@@ -55,8 +61,9 @@ async function handleSend() {
 
         const data = await response.json();
         
-        // 5. Display agent response
+        // 5. Display agent response and add to history
         appendMessage(data.reply, 'agent');
+        chatHistory.push({ role: 'assistant', content: data.reply });
         
         // (Optional Future) 6. Execute actions if returned by LLM
         if (data.action) {
@@ -66,44 +73,60 @@ async function handleSend() {
     } catch (error) {
         console.error("Error communicating with backend:", error);
         appendMessage("Sorry, I encountered an error connecting to the local agent.", 'system');
+        chatHistory.pop(); // Remove the user message since we didn't get a valid response
     } finally {
         setLoadingState(false);
     }
 }
 
+function clearChat() {
+    chatHistory = [];
+    const messagesArea = document.getElementById("chat-messages");
+    messagesArea.innerHTML = '<div class="message system">Chat cleared. Ask me anything about your spreadsheet.</div>';
+}
+
 /**
- * Extracts data from the currently active worksheet to build the CAG context.
- * For now, this extracts the used range as a CSV string.
+ * Extracts data from all worksheets in the workbook to build the CAG context.
+ * Returns a JSON object with sheet names as keys and arrays of row data as values.
  */
 async function extractExcelContext() {
     return Excel.run(async (context) => {
-        const sheet = context.workbook.worksheets.getActiveWorksheet();
-        // Get the range that actually contains data
-        const usedRange = sheet.getUsedRange();
-        
-        // Load the values of the used range
-        usedRange.load("values");
+        const worksheets = context.workbook.worksheets;
+        worksheets.load("items/name");
         await context.sync();
 
-        if (!usedRange.values || usedRange.values.length === 0) {
-            return "The current worksheet is empty.";
+        if (!worksheets.items || worksheets.items.length === 0) {
+            return JSON.stringify({});
         }
 
-        // Convert 2D array of values to JSON format for the LLM
-        // Assume the first row contains headers
-        const headers = usedRange.values[0];
-        const rowData = usedRange.values.slice(1);
+        const workbookData = {};
 
-        const jsonData = rowData.map(row => {
-            const rowObject = {};
-            row.forEach((cellValue, index) => {
-                const header = headers[index] || `Column${index + 1}`;
-                rowObject[header] = cellValue === null || cellValue === undefined ? "" : cellValue;
+        for (const sheet of worksheets.items) {
+            const usedRange = sheet.getUsedRange();
+            usedRange.load("values");
+            await context.sync();
+
+            if (!usedRange.values || usedRange.values.length === 0) {
+                workbookData[sheet.name] = [];
+                continue;
+            }
+
+            const headers = usedRange.values[0];
+            const rowData = usedRange.values.slice(1);
+
+            const jsonData = rowData.map(row => {
+                const rowObject = {};
+                row.forEach((cellValue, index) => {
+                    const header = headers[index] || `Column${index + 1}`;
+                    rowObject[header] = cellValue === null || cellValue === undefined ? "" : cellValue;
+                });
+                return rowObject;
             });
-            return rowObject;
-        });
 
-        return JSON.stringify(jsonData);
+            workbookData[sheet.name] = jsonData;
+        }
+
+        return JSON.stringify(workbookData);
     }).catch(error => {
         console.error("Error extracting Excel data:", error);
         return "Failed to extract context from Excel.";

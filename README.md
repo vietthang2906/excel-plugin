@@ -1,16 +1,20 @@
 # AI Excel Agent
 
-A locally hosted AI assistant that runs inside a Microsoft Excel taskpane. It extracts structured spreadsheet data into context and uses Context-Augmented Generation (CAG) to query a local Llama 3 instance.
+A locally hosted AI assistant that runs inside a Microsoft Excel taskpane. It extracts structured spreadsheet data into context and uses Context-Augmented Generation (CAG) with Claude to answer questions about your data.
 
 ## Project Structure
 - **/excel-agent-ui**: The frontend Office Add-in (HTML/JS) running inside Excel.
-- **/excel-agent-be**: The NestJS backend API that interfaces between the Add-in and your local Llama 3 model.
+- **/excel-agent-be**: The NestJS backend API that interfaces between the Add-in and Claude.
 
 ---
 
 ## Prerequisites
 1. **Node.js**: Ensure Node.js is installed.
-2. **Ollama**: Ensure [Ollama](https://ollama.com/) is installed and running locally with the Llama 3 model pulled (`ollama run llama3`).
+2. **Claude API Key**: Get an API key from [Anthropic Console](https://console.anthropic.com/). Create `excel-agent-be/.env` with:
+   ```
+   ANTHROPIC_API_KEY=your-api-key-here
+   ```
+   (Copy from `excel-agent-be/.env.example` and fill in your key.)
 3. **Office Dev Certificates**: The Office Taskpane requires a trusted HTTPS server. If you haven't installed the dev certificates on this machine yet, run this one-time command:
    ```bash
    npx office-addin-dev-certs install
