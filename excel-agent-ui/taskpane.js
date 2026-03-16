@@ -62,6 +62,9 @@ async function handleSend() {
         if (routeData.action === 'fetch' && routeData.range) {
             // Router requested specific data
             finalContext = await fetchExcelRange(routeData.range);
+        } else if (routeData.action === 'search' && routeData.column && routeData.value) {
+            // Router requested searching by column value
+            finalContext = await searchExcelData(routeData.column, routeData.value);
         } else if (routeData.action === 'fetch_all') {
             // Fallback: Router requested everything
             finalContext = await fetchExcelRange(schema.fullRangeAddress);
@@ -137,16 +140,21 @@ async function fetchExcelRange(rangeAddress) {
         const sheet = context.workbook.worksheets.getActiveWorksheet();
         const range = sheet.getRange(rangeAddress);
         range.load(["values", "rowIndex", "columnIndex"]); // Get indices to map coordinates
+        
+        const usedRange = sheet.getUsedRange();
+        usedRange.load(["rowIndex"]);
         await context.sync();
 
         if (!range.values || range.values.length === 0) {
             return "Requested range is empty.";
         }
         
-        // Fetch header row to provide context in the CSV
-        // Default to the first row of used range as header
-        const usedRange = sheet.getUsedRange();
-        const headerRange = usedRange.getRow(0);
+        // Fetch only the header cells that correspond to the fetched data columns
+        const headerRowIndex = usedRange.rowIndex; // Assuming first row of used range is header
+        const colIndex = range.columnIndex;
+        const colCount = range.values[0].length;
+        
+        const headerRange = sheet.getRangeByIndexes(headerRowIndex, colIndex, 1, colCount);
         headerRange.load("values");
         await context.sync();
         const headers = headerRange.values[0];
@@ -158,8 +166,8 @@ async function fetchExcelRange(rangeAddress) {
         
         range.values.forEach((row, index) => {
             const rowNum = startRow + index;
-            // Skip appending the header row again if the requested range started at row 1
-            if (rowNum === 1) return;
+            // Skip appending the header row again if the requested range started at the header row
+            if (rowNum === headerRowIndex + 1) return;
             
             const rowCSV = row.map(cellValue => {
                 if (typeof cellValue === 'string' && cellValue.includes(',')) {
@@ -175,6 +183,66 @@ async function fetchExcelRange(rangeAddress) {
     }).catch(error => {
         console.error("Error fetching Specific Range:", error);
         return "Failed to extract specified data range from Excel.";
+    });
+}
+
+/**
+ * PHASE B (Alternative): Searches for specific records matching a column value
+ */
+async function searchExcelData(columnName, searchValue) {
+    if (!columnName || !searchValue) return "";
+    return Excel.run(async (context) => {
+        const sheet = context.workbook.worksheets.getActiveWorksheet();
+        const usedRange = sheet.getUsedRange();
+        usedRange.load(["values", "rowIndex"]);
+        await context.sync();
+
+        if (!usedRange.values || usedRange.values.length === 0) {
+            return "Worksheet is empty.";
+        }
+
+        const headers = usedRange.values[0];
+        const targetColIndex = headers.findIndex(h => {
+             // Case-insensitive match, trimming spaces
+             return String(h).trim().toLowerCase() === String(columnName).trim().toLowerCase();
+        });
+
+        if (targetColIndex === -1) {
+             return `Column "${columnName}" not found in sheet.`;
+        }
+
+        const startRow = usedRange.rowIndex + 1;
+        let csvBuilder = [headers.join(",")];
+        
+        // Convert searchValue to string for loose comparison
+        const searchStr = String(searchValue).trim().toLowerCase();
+
+        // Skip header row (index 0)
+        for (let i = 1; i < usedRange.values.length; i++) {
+            const row = usedRange.values[i];
+            const cellVal = String(row[targetColIndex] || "").trim().toLowerCase();
+            
+            if (cellVal === searchStr || cellVal.includes(searchStr)) {
+                const rowNum = startRow + i;
+                const rowCSV = row.map(cell => {
+                    if (typeof cell === 'string' && cell.includes(',')) {
+                        return `"${cell}"`;
+                    }
+                    return cell === null || cell === undefined ? "" : cell;
+                }).join(",");
+                
+                csvBuilder.push(`Row ${rowNum}: ${rowCSV}`);
+            }
+        }
+
+        if (csvBuilder.length === 1) {
+            return `No records found in column "${columnName}" matching "${searchValue}".`;
+        }
+
+        return csvBuilder.join("\n");
+    }).catch(error => {
+        console.error("Error searching Excel Data:", error);
+        return "Failed to search specified data in Excel.";
     });
 }
 

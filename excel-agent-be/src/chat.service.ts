@@ -57,7 +57,12 @@ ${excelContext || "[]"}
             }
 
             const data = (await response.json()) as any;
-            return data.response.trim();
+            let textResponse = data.response.trim();
+            
+            // Remove <think>...</think> blocks from reasoning models (like deepseek-r1)
+            textResponse = textResponse.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+            
+            return textResponse;
 
         } catch (error) {
             this.logger.error('Failed to communicate with Ollama', error);
@@ -109,15 +114,20 @@ ${headerMapping}
 
 CRITICAL INSTRUCTIONS:
 1. Respond ONLY with a valid JSON object. Do NOT wrap it in markdown block quotes (like \`\`\`json). Just the raw object.
-2. If the user's question requires finding a specific person, ID, or searching, use "fetch_all" because you don't know what row they are in.
-3. If the user's question references a specific row number, calculate the Excel range (matching the Headers Mapping columns exactly) and use "fetch". 
+2. ONLY use "fetch" if the user EXPLICITLY says "Row X". If they say "record X" or "ID X" or "number X", they are NOT asking for a row index. They are asking to search for a value.
+3. When using "search", carefully distinguish between the column the user wants to *retrieve* and the column they want to *search by*. For example, in "value of the permanent_id of records 146", the value "146" belongs to an ID or Ordinal column, NOT the permanent_id column.
+4. If the user asks to find a record by a number (like "record 146"), look at the Headers Mapping and find the column that actually contains sequence numbers or IDs (like "Ordinal Number" or "ID"), and use that exact header name for the "column" field.
+5. Do NOT blindly copy the examples below. Calculate actual ranges or use actual column names from the Headers Mapping.
 
 Allowed JSON Output formats:
-To fetch everything (best for searching/aggregating):
+To fetch everything (best for aggregating, counting, or when unsure):
 { "action": "fetch_all" }
 
-To fetch specific rows (best if row number is explicitly requested):
-{ "action": "fetch", "range": "A5:C5" }`;
+To fetch specific Excel rows (ONLY IF "Row X" is explicitly requested):
+{ "action": "fetch", "range": "<CALCULATED_RANGE>" }
+
+To search for a specific value in a column (e.g. finding "record 146" means search the "Ordinal Number" column, not the return column):
+{ "action": "search", "column": "<EXACT_HEADER_NAME>", "value": "146" }`;
 
         const fullPrompt = `${systemPrompt}\n\nUser Question: ${userPrompt}\n\nAgent Output:`;
 
