@@ -70,6 +70,9 @@ async function handleSend() {
             finalContext = await fetchExcelRange(schema.fullRangeAddress);
         }
 
+        // Prepend active worksheet context for the Answer Agent
+        finalContext = `Active Worksheet: ${schema.sheetName}\n\n${finalContext}`;
+
         // 5. Send to precision Answer Backend
         const response = await fetch(`${API_BASE_URL}/chat`, {
             method: 'POST',
@@ -105,12 +108,14 @@ async function handleSend() {
 async function extractExcelSchema() {
     return Excel.run(async (context) => {
         const sheet = context.workbook.worksheets.getActiveWorksheet();
+        sheet.load("name");
+        
         const usedRange = sheet.getUsedRange();
         usedRange.load(["address", "rowCount", "columnCount"]);
         await context.sync();
 
         if (usedRange.rowCount === 0) {
-            return { isEmpty: true };
+            return { isEmpty: true, sheetName: sheet.name };
         }
 
         // Just get the header row (assume row 1 of the used range)
@@ -120,6 +125,7 @@ async function extractExcelSchema() {
 
         return {
             isEmpty: false,
+            sheetName: sheet.name,
             fullRangeAddress: usedRange.address.split("!")[1], // Strip SheetName
             rowCount: usedRange.rowCount,
             columnCount: usedRange.columnCount,

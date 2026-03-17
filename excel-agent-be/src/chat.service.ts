@@ -105,6 +105,7 @@ ${excelContext || "[]"}
 Your goal is to inspect the user's question and the Schema of the active worksheet and decide IF you need to fetch specific data rows to answer the question, or if you should fetch all data.
 
 --- WORKSHEET SCHEMA ---
+Active Worksheet: ${schema.sheetName}
 Full Data Range: ${schema.fullRangeAddress}
 Total Rows: ${schema.rowCount}
 Total Columns: ${schema.columnCount}
