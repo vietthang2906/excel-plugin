@@ -4,6 +4,7 @@ import { ChatService } from './chat.service';
 export interface ChatRequestDto {
     prompt: string;
     context: string;
+    schema?: { rowCount?: number };
 }
 
 export interface ChatRouteRequestDto {
@@ -22,8 +23,12 @@ export class ChatController {
         }
 
         try {
-            const reply = await this.chatService.generateResponse(body.prompt, body.context);
-            return { reply };
+            const result = await this.chatService.generateResponse(
+                body.prompt,
+                body.context,
+                body.schema,
+            );
+            return result;
         } catch (error) {
             console.error('Error in ChatController:', error);
             throw new HttpException(

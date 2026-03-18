@@ -1,1 +1,3 @@
 excel-agent-be/node_modules/
+ollama/
+excel-agent-be/.env

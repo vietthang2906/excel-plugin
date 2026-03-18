@@ -25,8 +25,8 @@ let ChatController = class ChatController {
             throw new common_1.HttpException('Prompt is required', common_1.HttpStatus.BAD_REQUEST);
         }
         try {
-            const reply = await this.chatService.generateResponse(body.prompt, body.context);
-            return { reply };
+            const result = await this.chatService.generateResponse(body.prompt, body.context, body.schema);
+            return result;
         }
         catch (error) {
             console.error('Error in ChatController:', error);

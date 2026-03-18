@@ -1,0 +1,43 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    pull_policy: always
+    tty: true
+    restart: unless-stopped
+    ports:
+      - "11434:11434" # Allows external API calls
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 24G # Hard cap to keep your 32GB RAM safe for other tasks
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: always
+    ports:
+      - "4555:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_AUTH=True # Enable this if you expose the UI via your Nginx/OpenWrt subnets
+    volumes:
+      - open-webui:/app/backend/data
+    depends_on:
+      - ollama
+    deploy:
+      resources:
+        limits:
+          memory: 4G # Open WebUI is light, but let's cap it
+
+volumes:
+  open-webui:
