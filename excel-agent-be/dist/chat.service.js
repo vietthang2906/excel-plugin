@@ -5,38 +5,24 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
 var ChatService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatService = void 0;
 const common_1 = require("@nestjs/common");
+const prompt_service_1 = require("./prompt.service");
 let ChatService = ChatService_1 = class ChatService {
+    promptService;
     logger = new common_1.Logger(ChatService_1.name);
     ollamaUrl = 'http://127.0.0.1:11434/api/generate';
+    constructor(promptService) {
+        this.promptService = promptService;
+    }
     async generateResponse(userPrompt, excelContext) {
-        const systemPrompt = `You are an expert AI assistant operating inside Microsoft Excel.
-Your task is to answer the user's question based Strictly and Exclusively on the provided data representing a subset of the current worksheet.
-
-CRITICAL INSTRUCTIONS:
-1. ONLY use the data provided below. NEVER invent, guess, hallucinate, or synthesize information, names, numbers, or facts.
-2. If the user's question cannot be completely answered using the provided data, you MUST reply with exactly: "I cannot answer this based on the provided spreadsheet data. Note that data must be in the active worksheet."
-3. When answering, be concise and direct. Do not add conversational filler.
-4. If the data is empty or missing, inform the user that their worksheet appears to be empty and there is no data to answer questions about.
-
---- EXCEL SUBSET DATA ---
-${excelContext || "[]"}
---------------------------------`;
-        const fullPrompt = `${systemPrompt}\n\nUser Question: ${userPrompt}\n\nAnswer:`;
-        let first10Lines = '';
-        try {
-            const parsed = JSON.parse(excelContext || '[]');
-            const displayData = Array.isArray(parsed) ? parsed.slice(0, 5) : parsed;
-            first10Lines = JSON.stringify(displayData, null, 2);
-        }
-        catch (e) {
-            const contextLines = (excelContext || '').split(/\r?\n/);
-            first10Lines = contextLines.slice(0, 100).join('\n');
-        }
-        this.logger.log(`Sending prompt to local model (Context length: ${excelContext?.length || 0} chars)\n--- FULL PROMPT ---\n${fullPrompt}\n-------------------`);
+        const fullPrompt = this.promptService.buildAnswerPrompt(excelContext, userPrompt);
+        this.logger.log(`Sending prompt to local model (Context length: ${excelContext?.length || 0} chars)\n---------`);
         try {
             const response = await fetch(this.ollamaUrl, {
                 method: 'POST',
@@ -65,7 +51,7 @@ ${excelContext || "[]"}
             throw error;
         }
     }
-    async routeTask(userPrompt, schema) {
+    async routeTask(userPrompt, schema, structureContext) {
         if (schema.isEmpty) {
             return { action: 'answer', reply: "The current worksheet is empty." };
         }
@@ -91,35 +77,13 @@ ${excelContext || "[]"}
         const headerMapping = schema.headers.map((header, index) => {
             return `Column ${getColumnLetter(startColIndex + index)}: "${header}"`;
         }).join('\n');
-        const systemPrompt = `You are an expert Data Router AI for Microsoft Excel.
-Your goal is to inspect the user's question and the Schema of the active worksheet and decide IF you need to fetch specific data rows to answer the question, or if you should fetch all data.
-
---- WORKSHEET SCHEMA ---
-Active Worksheet: ${schema.sheetName}
+        const schemaBlock = `Active Worksheet: ${schema.sheetName}
 Full Data Range: ${schema.fullRangeAddress}
 Total Rows: ${schema.rowCount}
 Total Columns: ${schema.columnCount}
 Headers Mapping:
-${headerMapping}
-------------------------
-
-CRITICAL INSTRUCTIONS:
-1. Respond ONLY with a valid JSON object. Do NOT wrap it in markdown block quotes (like \`\`\`json). Just the raw object.
-2. ONLY use "fetch" if the user EXPLICITLY says "Row X". If they say "record X" or "ID X" or "number X", they are NOT asking for a row index. They are asking to search for a value.
-3. When using "search", carefully distinguish between the column the user wants to *retrieve* and the column they want to *search by*. For example, in "value of the permanent_id of records 146", the value "146" belongs to an ID or Ordinal column, NOT the permanent_id column.
-4. If the user asks to find a record by a number (like "record 146"), look at the Headers Mapping and find the column that actually contains sequence numbers or IDs (like "Ordinal Number" or "ID"), and use that exact header name for the "column" field.
-5. Do NOT blindly copy the examples below. Calculate actual ranges or use actual column names from the Headers Mapping.
-
-Allowed JSON Output formats:
-To fetch everything (best for aggregating, counting, or when unsure):
-{ "action": "fetch_all" }
-
-To fetch specific Excel rows (ONLY IF "Row X" is explicitly requested):
-{ "action": "fetch", "range": "<CALCULATED_RANGE>" }
-
-To search for a specific value in a column (e.g. finding "record 146" means search the "Ordinal Number" column, not the return column):
-{ "action": "search", "column": "<EXACT_HEADER_NAME>", "value": "146" }`;
-        const fullPrompt = `${systemPrompt}\n\nUser Question: ${userPrompt}\n\nAgent Output:`;
+${headerMapping}`;
+        const fullPrompt = this.promptService.buildRouterPrompt(schemaBlock, userPrompt, structureContext);
         this.logger.log(`Routing Task for user prompt: "${userPrompt}"\n--- FULL ROUTER PROMPT ---\n${fullPrompt}\n--------------------------`);
         try {
             const response = await fetch(this.ollamaUrl, {
@@ -159,6 +123,7 @@ To search for a specific value in a column (e.g. finding "record 146" means sear
 };
 exports.ChatService = ChatService;
 exports.ChatService = ChatService = ChatService_1 = __decorate([
-    (0, common_1.Injectable)()
+    (0, common_1.Injectable)(),
+    __metadata("design:paramtypes", [prompt_service_1.PromptService])
 ], ChatService);
 //# sourceMappingURL=chat.service.js.map

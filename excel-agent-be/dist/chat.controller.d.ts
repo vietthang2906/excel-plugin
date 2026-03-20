@@ -6,6 +6,7 @@ export interface ChatRequestDto {
 export interface ChatRouteRequestDto {
     prompt: string;
     schema: any;
+    structureContext?: string;
 }
 export declare class ChatController {
     private readonly chatService;

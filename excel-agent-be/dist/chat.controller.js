@@ -38,7 +38,7 @@ let ChatController = class ChatController {
             throw new common_1.HttpException('Prompt and schema are required', common_1.HttpStatus.BAD_REQUEST);
         }
         try {
-            const routeAction = await this.chatService.routeTask(body.prompt, body.schema);
+            const routeAction = await this.chatService.routeTask(body.prompt, body.schema, body.structureContext);
             return routeAction;
         }
         catch (error) {

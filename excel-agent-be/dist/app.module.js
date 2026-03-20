@@ -12,6 +12,7 @@ const app_controller_1 = require("./app.controller");
 const app_service_1 = require("./app.service");
 const chat_controller_1 = require("./chat.controller");
 const chat_service_1 = require("./chat.service");
+const prompt_service_1 = require("./prompt.service");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -19,7 +20,7 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [],
         controllers: [app_controller_1.AppController, chat_controller_1.ChatController],
-        providers: [app_service_1.AppService, chat_service_1.ChatService],
+        providers: [app_service_1.AppService, chat_service_1.ChatService, prompt_service_1.PromptService],
     })
 ], AppModule);
 //# sourceMappingURL=app.module.js.map

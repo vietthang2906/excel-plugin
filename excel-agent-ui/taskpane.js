@@ -54,12 +54,33 @@ async function handleSend() {
             throw new Error(`Router error: ${routeResponse.status}`);
         }
 
-        const routeData = await routeResponse.json();
+        let routeData = await routeResponse.json();
+        let structureContext = null;
+        
+        // --- MULTI-PASS ROUTING LOOP ---
+        // Max 3 passes to prevent infinite loops (Spine -> Headers -> Data)
+        for (let pass = 0; pass < 3; pass++) {
+            if (routeData.action === 'scan_spine') {
+                const spineResult = await scanSpineColumn(routeData.column);
+                structureContext = (structureContext ? structureContext + "\n\n" : "") + 
+                                   `Spine Scan (Col ${spineResult.column}):\n${spineResult.data}`;
+                routeData = await callRouter(message, schema, structureContext);
+            } else if (routeData.action === 'read_headers') {
+                const headersResult = await readSpecificRows(routeData.rows);
+                structureContext = (structureContext ? structureContext + "\n\n" : "") + `Specific Row Headers:\n${headersResult}`;
+                routeData = await callRouter(message, schema, structureContext);
+            } else {
+                // Not a structural action, break loop to perform final fetch
+                break;
+            }
+        }
         
         let finalContext = "";
         
-        // Phase B: Conditionally Fetch Data
-        if (routeData.action === 'fetch' && routeData.range) {
+        // Phase B: Fetch Final Data
+        if (routeData.action === 'fetch_targeted' && routeData.ranges) {
+            finalContext = await fetchMultipleRanges(routeData.ranges);
+        } else if (routeData.action === 'fetch' && routeData.range) {
             // Router requested specific data
             finalContext = await fetchExcelRange(routeData.range);
         } else if (routeData.action === 'search' && routeData.column && routeData.value) {
@@ -68,10 +89,21 @@ async function handleSend() {
         } else if (routeData.action === 'fetch_all') {
             // Fallback: Router requested everything
             finalContext = await fetchExcelRange(schema.fullRangeAddress);
+        } else if (routeData.action === 'answer' && routeData.reply) {
+            // Router decided to answer directly (e.g. "Worksheet is empty")
+            appendMessage(routeData.reply, 'agent');
+            setLoadingState(false);
+            return;
         }
 
-        // Prepend active worksheet context for the Answer Agent
-        finalContext = `Active Worksheet: ${schema.sheetName}\n\n${finalContext}`;
+
+        // Prepend structural context (spine scan, read headers) to the final data context
+        // so the Answer LLM can see the layout boundaries and gaps.
+        let fullContextForAnswer = `Active Worksheet: ${schema.sheetName}\n\n`;
+        if (structureContext) {
+            fullContextForAnswer += `================================================================================\nSTRUCTURAL CONTEXT (Discovered during Scan Phase)\n================================================================================\n${structureContext}\n================================================================================\n\n`;
+        }
+        fullContextForAnswer += `================================================================================\nEXCEL DATA CONTENT\n================================================================================\n${finalContext}`;
 
         // 5. Send to precision Answer Backend
         const response = await fetch(`${API_BASE_URL}/chat`, {
@@ -81,7 +113,7 @@ async function handleSend() {
             },
             body: JSON.stringify({
                 prompt: message,
-                context: finalContext
+                context: fullContextForAnswer
             })
         });
 
@@ -250,6 +282,116 @@ async function searchExcelData(columnName, searchValue) {
         console.error("Error searching Excel Data:", error);
         return "Failed to search specified data in Excel.";
     });
+}
+
+/**
+ * Helper to call the Router with optional structure context
+ */
+async function callRouter(prompt, schema, structureContext = null) {
+    const response = await fetch(`${API_BASE_URL}/chat/route`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, schema, structureContext })
+    });
+    if (!response.ok) throw new Error(`Router error: ${response.status}`);
+    return await response.json();
+}
+
+/**
+ * Scans a specific column (or first non-empty) to find table boundaries.
+ */
+async function scanSpineColumn(columnHint = null) {
+    return Excel.run(async (context) => {
+        const sheet = context.workbook.worksheets.getActiveWorksheet();
+        const usedRange = sheet.getUsedRange();
+        usedRange.load(["address", "rowCount", "columnCount", "rowIndex", "columnIndex"]);
+        await context.sync();
+
+        let targetColIndex = usedRange.columnIndex;
+        let columnValues = [];
+        let colLetter = columnHint || "";
+
+        if (columnHint) {
+            // Excel column letter to 0-based index
+            let index = 0;
+            const letter = columnHint.toUpperCase();
+            for (let i = 0; i < letter.length; i++) {
+                index = index * 26 + (letter.charCodeAt(i) - 64);
+            }
+            targetColIndex = index - 1;
+        }
+
+        // Fetch the column
+        const colRange = sheet.getRangeByIndexes(usedRange.rowIndex, targetColIndex, usedRange.rowCount, 1);
+        colRange.load("values");
+        await context.sync();
+        
+        columnValues = colRange.values.map(v => v[0]);
+        if (!colLetter) colLetter = String.fromCharCode(65 + targetColIndex);
+
+        // Token-efficient formatting: only show transitions and representative rows
+        let result = [];
+        let prevValType = null;
+        const startRow = usedRange.rowIndex + 1;
+
+        columnValues.forEach((val, idx) => {
+            const rowNum = startRow + idx;
+            const currentValType = (val === null || val === "" || val === undefined) ? "EMPTY" : "DATA";
+            
+            // Always show first row, last row, and any transition rows
+            if (idx === 0 || idx === columnValues.length - 1 || currentValType !== prevValType) {
+                const displayVal = (currentValType === "EMPTY") ? "<EMPTY>" : `"${String(val).substring(0, 20)}"`;
+                result.push(`Row ${rowNum}: ${displayVal}`);
+            } else if (idx > 0 && idx < columnValues.length - 1 && currentValType === prevValType && result[result.length-1] !== "...") {
+                // If it's a long run of the same type, add a placeholder
+                if (idx < columnValues.length - 2 && columnValues[idx+1] !== undefined) {
+                     const nextValType = (columnValues[idx+1] === null || columnValues[idx+1] === "" || columnValues[idx+1] === undefined) ? "EMPTY" : "DATA";
+                     if (nextValType === currentValType) {
+                         result.push("...");
+                     }
+                }
+            }
+            prevValType = currentValType;
+        });
+
+        return { column: colLetter, data: result.join("\n") };
+    });
+}
+
+/**
+ * Reads specific rows (usually headers identified in spine scan)
+ */
+async function readSpecificRows(rowIndices) {
+    if (!rowIndices || rowIndices.length === 0) return "";
+    return Excel.run(async (context) => {
+        const sheet = context.workbook.worksheets.getActiveWorksheet();
+        const usedRange = sheet.getUsedRange();
+        usedRange.load(["columnIndex", "columnCount"]);
+        await context.sync();
+
+        let results = [];
+        for (const idx of rowIndices) {
+            // idx is 0-based relative to worksheet
+            const rowRange = sheet.getRangeByIndexes(idx, usedRange.columnIndex, 1, usedRange.columnCount);
+            rowRange.load("values");
+            await context.sync();
+            results.push(`Row ${idx + 1}: ${rowRange.values[0].join(",")}`);
+        }
+        return results.join("\n");
+    });
+}
+
+/**
+ * Fetches multiple non-contiguous ranges and merges them.
+ */
+async function fetchMultipleRanges(ranges) {
+    if (!ranges || ranges.length === 0) return "";
+    let combinedContext = [];
+    for (const range of ranges) {
+        const data = await fetchExcelRange(range);
+        combinedContext.push(`--- RANGE ${range} ---\n${data}`);
+    }
+    return combinedContext.join("\n\n");
 }
 
 // UI Helpers

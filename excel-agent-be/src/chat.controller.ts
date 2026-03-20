@@ -8,7 +8,8 @@ export interface ChatRequestDto {
 
 export interface ChatRouteRequestDto {
     prompt: string;
-    schema: any; // Using any for schema extraction metadata
+    schema: any; 
+    structureContext?: string;
 }
 
 @Controller('chat')
@@ -40,7 +41,11 @@ export class ChatController {
         }
 
         try {
-            const routeAction = await this.chatService.routeTask(body.prompt, body.schema);
+            const routeAction = await this.chatService.routeTask(
+                body.prompt, 
+                body.schema, 
+                body.structureContext
+            );
             return routeAction;
         } catch (error) {
             console.error('Error in handleRoute:', error);

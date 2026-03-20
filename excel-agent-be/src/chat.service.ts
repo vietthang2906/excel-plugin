@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { PromptService } from './prompt.service';
 
 @Injectable()
 export class ChatService {
@@ -6,34 +7,12 @@ export class ChatService {
     // Local Ollama instance URL (defaults to 11434)
     private readonly ollamaUrl = 'http://127.0.0.1:11434/api/generate';
 
+    constructor(private readonly promptService: PromptService) { }
+
     async generateResponse(userPrompt: string, excelContext: string): Promise<string> {
-        // Construct the Agentic Answer generation prompt
-        const systemPrompt = `You are an expert AI assistant operating inside Microsoft Excel.
-Your task is to answer the user's question based Strictly and Exclusively on the provided data representing a subset of the current worksheet.
+        const fullPrompt = this.promptService.buildAnswerPrompt(excelContext, userPrompt);
 
-CRITICAL INSTRUCTIONS:
-1. ONLY use the data provided below. NEVER invent, guess, hallucinate, or synthesize information, names, numbers, or facts.
-2. If the user's question cannot be completely answered using the provided data, you MUST reply with exactly: "I cannot answer this based on the provided spreadsheet data. Note that data must be in the active worksheet."
-3. When answering, be concise and direct. Do not add conversational filler.
-4. If the data is empty or missing, inform the user that their worksheet appears to be empty and there is no data to answer questions about.
-
---- EXCEL SUBSET DATA ---
-${excelContext || "[]"}
---------------------------------`;
-
-        const fullPrompt = `${systemPrompt}\n\nUser Question: ${userPrompt}\n\nAnswer:`;
-
-        let first10Lines = '';
-        try {
-            const parsed = JSON.parse(excelContext || '[]');
-            const displayData = Array.isArray(parsed) ? parsed.slice(0, 5) : parsed;
-            first10Lines = JSON.stringify(displayData, null, 2);
-        } catch (e) {
-            const contextLines = (excelContext || '').split(/\r?\n/);
-            first10Lines = contextLines.slice(0, 100).join('\n');
-        }
-
-        this.logger.log(`Sending prompt to local model (Context length: ${excelContext?.length || 0} chars)\n--- FULL PROMPT ---\n${fullPrompt}\n-------------------`);
+        this.logger.log(`Sending prompt to local model (Context length: ${excelContext?.length || 0} chars)\n---------`);
 
         try {
             const response = await fetch(this.ollamaUrl, {
@@ -45,7 +24,6 @@ ${excelContext || "[]"}
                     model: 'deepseek-r1:8b', // Must match the model installed on the user's machine
                     prompt: fullPrompt,
                     stream: false,
-                    // Additional parameters like temperature can go here
                     options: {
                         temperature: 0.1 // Lower temp for more analytical/factual responses
                     }
@@ -58,10 +36,10 @@ ${excelContext || "[]"}
 
             const data = (await response.json()) as any;
             let textResponse = data.response.trim();
-            
+
             // Remove <think>...</think> blocks from reasoning models (like deepseek-r1)
             textResponse = textResponse.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-            
+
             return textResponse;
 
         } catch (error) {
@@ -70,7 +48,7 @@ ${excelContext || "[]"}
         }
     }
 
-    async routeTask(userPrompt: string, schema: any): Promise<any> {
+    async routeTask(userPrompt: string, schema: any, structureContext?: string): Promise<any> {
         if (schema.isEmpty) {
             return { action: 'answer', reply: "The current worksheet is empty." };
         }
@@ -101,36 +79,15 @@ ${excelContext || "[]"}
             return `Column ${getColumnLetter(startColIndex + index)}: "${header}"`;
         }).join('\n');
 
-        const systemPrompt = `You are an expert Data Router AI for Microsoft Excel.
-Your goal is to inspect the user's question and the Schema of the active worksheet and decide IF you need to fetch specific data rows to answer the question, or if you should fetch all data.
-
---- WORKSHEET SCHEMA ---
-Active Worksheet: ${schema.sheetName}
+        // Build the schema block that replaces {{SCHEMA_BLOCK}} in the template
+        const schemaBlock = `Active Worksheet: ${schema.sheetName}
 Full Data Range: ${schema.fullRangeAddress}
 Total Rows: ${schema.rowCount}
 Total Columns: ${schema.columnCount}
 Headers Mapping:
-${headerMapping}
-------------------------
+${headerMapping}`;
 
-CRITICAL INSTRUCTIONS:
-1. Respond ONLY with a valid JSON object. Do NOT wrap it in markdown block quotes (like \`\`\`json). Just the raw object.
-2. ONLY use "fetch" if the user EXPLICITLY says "Row X". If they say "record X" or "ID X" or "number X", they are NOT asking for a row index. They are asking to search for a value.
-3. When using "search", carefully distinguish between the column the user wants to *retrieve* and the column they want to *search by*. For example, in "value of the permanent_id of records 146", the value "146" belongs to an ID or Ordinal column, NOT the permanent_id column.
-4. If the user asks to find a record by a number (like "record 146"), look at the Headers Mapping and find the column that actually contains sequence numbers or IDs (like "Ordinal Number" or "ID"), and use that exact header name for the "column" field.
-5. Do NOT blindly copy the examples below. Calculate actual ranges or use actual column names from the Headers Mapping.
-
-Allowed JSON Output formats:
-To fetch everything (best for aggregating, counting, or when unsure):
-{ "action": "fetch_all" }
-
-To fetch specific Excel rows (ONLY IF "Row X" is explicitly requested):
-{ "action": "fetch", "range": "<CALCULATED_RANGE>" }
-
-To search for a specific value in a column (e.g. finding "record 146" means search the "Ordinal Number" column, not the return column):
-{ "action": "search", "column": "<EXACT_HEADER_NAME>", "value": "146" }`;
-
-        const fullPrompt = `${systemPrompt}\n\nUser Question: ${userPrompt}\n\nAgent Output:`;
+        const fullPrompt = this.promptService.buildRouterPrompt(schemaBlock, userPrompt, structureContext);
 
         this.logger.log(`Routing Task for user prompt: "${userPrompt}"\n--- FULL ROUTER PROMPT ---\n${fullPrompt}\n--------------------------`);
 
@@ -147,7 +104,6 @@ To search for a specific value in a column (e.g. finding "record 146" means sear
                     options: {
                         temperature: 0.0 // Zero temperature for strict routing deterministic output
                     },
-                    // We can specify format: 'json' with Ollama if the model supports it out of the box
                     format: 'json'
                 }),
             });
